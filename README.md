@@ -1,7 +1,8 @@
-"#db-sql-scripts" 
+# db-sql-scripts
+
 # SQL script Project
 
-Welcome to the this SQL script Project! This repository contains SQL snippets, scripts to generate random data, and Proof of Concepts (POCs).
+Welcome to this SQL script Project! This repository contains SQL snippets, scripts to generate random data, and Proof of Concepts (POCs).
 
 ## Project Overview
 
@@ -19,11 +20,18 @@ At present, the project includes the following:
    Location: `MSSQL-bluehat-hacking/POC-xss-attack.sql`  
    This script demonstrates a Proof of Concept for preventing cross-site scripting (XSS) attacks on a Microsoft SQL Server. The script includes vulnerable scenarios, methods of exploitation, and secure practices to mitigate these vulnerabilities.
 
+3. **POC-generate-dummy-data-MSSQL.sql**  
+   Location: `testing/POC-generate-dummy-data-MSSQL.sql`  
+   This script provides a POC for generating dummy data for testing purposes in a Microsoft SQL Server environment. It includes the creation of `orders` and `orderline` tables, and a process for generating random data to simulate realistic database entries.
+
 ## Project Structure
 
 - **MSSQL-bluehat-hacking/**: This directory contains POC scripts related to preventing specific hacking attacks.
   - `POC-sql-injection.sql`: POC for SQL injection prevention.
   - `POC-xss-attack.sql`: POC for XSS attack prevention.
+
+- **testing/**: This directory contains scripts related to generating test data.
+  - `POC-generate-dummy-data-MSSQL.sql`: POC for generating dummy data in MSSQL.
 
 ## Future Additions
 This project is a work in progress, and future updates will include:
