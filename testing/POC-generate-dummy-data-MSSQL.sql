@@ -35,7 +35,7 @@ CREATE TABLE [orderline] (
 	OrderID INT not [null],
 	paid [INT],
 	PRIMARY [KEY] (Id),
-    CONSTRAINT FK_OrderOrderline FOREIGN [KEY] (Id) REFERENCES [orderline](Id));
+    CONSTRAINT FK_OrderOrderline FOREIGN [KEY] (Id) REFERENCES [orders](Id));
 GO
 
 -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -
