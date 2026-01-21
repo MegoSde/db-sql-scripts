@@ -426,3 +426,179 @@ GO
    - Hvorfor blev filtered index mindre?
    - Hvilke trade-offs er der ved filtered index?
    ========================= */
+
+/*
+APPENDIX / FORLÆNGELSE: Execution plan + filtered index + in_future-model
+Forudsætning:
+- I har kørt alle den ovenstående
+
+Mål:
+A) Vis at optimizer kan IGNORERE filtered index når query kun bruger parametre
+B) Vis at "explicit periode" får Index Seek på filtered index
+C) Forklar TODAY/NOW-problemet kort
+D) Implementer in_future kolonne + SP der vedligeholder den
+E) Filtered index på in_future=1 + test/plan
+*/
+
+
+/* =========================
+   STEP A2: Faktisk plan (PROFILE) - query KUN med parametre
+   Forventning:
+   - Ofte Clustered Index Scan, fordi SQL Server ikke kan bevise at @From/@To er indenfor filteret
+   ========================= */
+DECLARE @TestDay date;
+DECLARE @From datetime2(0);
+DECLARE @To datetime2(0);
+
+SET @TestDay = '2026-02-15';
+SET @From = CAST(@TestDay AS datetime2(0));
+SET @To   = DATEADD(DAY, 1, @From);
+
+SET STATISTICS PROFILE ON;
+
+SELECT ReservationId, StartTs, EndTs, Seats, CustomerName
+FROM dbo.Reservation
+WHERE StartTs >= @From
+  AND StartTs <  @To
+ORDER BY StartTs;
+
+SET STATISTICS PROFILE OFF;
+GO
+
+/* =========================
+   STEP A3: Faktisk plan (PROFILE) - "fix" query med explicit periode
+   Forventning:
+   - Index Seek på IX_Reservation_Future_StartTs
+   ========================= */
+SET STATISTICS PROFILE ON;
+
+DECLARE @TestDay date;
+DECLARE @From datetime2(0);
+DECLARE @To datetime2(0);
+
+SET @TestDay = '2026-02-15';
+SET @From = CAST(@TestDay AS datetime2(0));
+SET @To   = DATEADD(DAY, 1, @From);
+
+SELECT ReservationId, StartTs, EndTs, Seats, CustomerName
+FROM dbo.Reservation
+WHERE StartTs >= @From
+  AND StartTs <  @To
+  AND StartTs >= '2026-01-20'
+  AND StartTs <  '2026-04-20'
+ORDER BY StartTs;
+
+SET STATISTICS PROFILE OFF;
+GO
+
+/* =========================
+   STEP B: Kort skriv om TODAY/NOW problemstillingen (til rapport)
+   - SQL Server tillader ikke GETDATE()/SYSUTCDATETIME() i et filtered index filter
+   - fordi det er ikke-deterministisk og ville ændre hvilke rækker der "hører til" hvert sekund.
+   - Derfor bruger man typisk en flag-kolonne + job/SP der opdaterer den dagligt.
+   ========================= */
+
+/* =========================
+   STEP C1: Tilføj in_future kolonne (produktionsnaer model)
+   - Default TRUE (1)
+   - Vi vedligeholder den via en procedure
+   ========================= */
+IF COL_LENGTH('dbo.Reservation', 'in_future') IS NULL
+BEGIN
+    ALTER TABLE dbo.Reservation
+    ADD in_future bit NOT NULL
+        CONSTRAINT DF_Reservation_in_future DEFAULT (1);
+END
+GO
+
+/* =========================
+   STEP C2: SP der sætter gamle reservationer til in_future = 0
+   - Køres typisk én gang i døgnet (fx lige efter midnat)
+   ========================= */
+CREATE OR ALTER PROCEDURE dbo.RefreshInFutureFlag
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Today date;
+    SET @Today = CONVERT(date, SYSUTCDATETIME());
+
+    -- alt før i dag -> historik
+    UPDATE dbo.Reservation
+    SET in_future = 0
+    WHERE StartTs < CAST(@Today AS datetime2(0))
+      AND in_future = 1;
+
+    -- alt fra i dag og frem -> future
+    UPDATE dbo.Reservation
+    SET in_future = 1
+    WHERE StartTs >= CAST(@Today AS datetime2(0))
+      AND in_future = 0;
+END
+GO
+
+EXEC dbo.RefreshInFutureFlag;
+GO
+
+/* =========================
+   STEP C3: Filtered index på in_future = 1
+   - Nu er filteret stabilt (det afhænger ikke af NOW)
+   ========================= */
+DROP INDEX IF EXISTS IX_Reservation_FutureFlag_StartTs ON dbo.Reservation;
+DROP INDEX IF EXISTS IX_Reservation_Future_StartTs ON dbo.Reservation;
+GO
+
+CREATE INDEX IX_Reservation_FutureFlag_StartTs
+ON dbo.Reservation (StartTs)
+INCLUDE (EndTs, Seats, CustomerName)
+WHERE in_future = 1;
+GO
+
+UPDATE STATISTICS dbo.Reservation WITH FULLSCAN;
+GO
+
+/* =========================
+   STEP C4: Faktisk plan (PROFILE) - query med in_future = 1
+   Forventning:
+   - Index Seek på IX_Reservation_FutureFlag_StartTs
+   ========================= */
+DECLARE @TestDay date;
+DECLARE @From datetime2(0);
+DECLARE @To datetime2(0);
+
+SET @TestDay = '2026-02-15';
+SET @From = CAST(@TestDay AS datetime2(0));
+SET @To   = DATEADD(DAY, 1, @From);
+
+SET STATISTICS PROFILE ON;
+
+SELECT ReservationId, StartTs, EndTs, Seats, CustomerName
+FROM dbo.Reservation
+WHERE in_future = 1
+  AND StartTs >= @From
+  AND StartTs <  @To
+ORDER BY StartTs;
+
+SET STATISTICS PROFILE OFF;
+GO
+
+/* =========================
+   STEP C5: Index-størrelse (MB) til rapport
+   ========================= */
+SELECT
+    i.name AS IndexName,
+    i.type_desc,
+    i.has_filter,
+    i.filter_definition,
+    SUM(a.total_pages) * 8 / 1024.0 AS TotalMB,
+    SUM(a.used_pages)  * 8 / 1024.0 AS UsedMB,
+    MAX(p.rows) AS RowCounter
+FROM sys.indexes i
+JOIN sys.partitions p
+  ON p.object_id = i.object_id AND p.index_id = i.index_id
+JOIN sys.allocation_units a
+  ON a.container_id = p.partition_id
+WHERE i.object_id = OBJECT_ID('dbo.Reservation')
+GROUP BY i.name, i.type_desc, i.has_filter, i.filter_definition
+ORDER BY TotalMB DESC;
+GO
